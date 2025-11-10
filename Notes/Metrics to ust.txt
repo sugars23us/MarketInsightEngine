@@ -1,0 +1,97 @@
+
+1)  average trade size (ATS)
+
+If you calculate Volume / TradeCount, you can estimate average trade size, which is a great metric for identifying institutional vs. retail activity:
+
+
+SELECT Volume * 1.0 / NULLIF(TradeCount, 0) AS AvgTradeSize
+FROM dbo.BAR
+
+
+For example:
+
+AvgTradeSize > 1,000 → mostly institutional prints.
+
+AvgTradeSize < 100 → mostly retail or fragmented algo trades.
+
+
+
+
+What to look for (practical signals)
+
+Spikes in ATS with only modest price change → potential hidden accumulation/distribution.
+
+Sustained ATS_MA15 rising → larger prints becoming the norm → often precedes trend moves.
+
+ATS_Z60 > +2 → unusually large trades in the last hour (institutional).
+
+Combine with VolumeRatio or price trend for higher confidence.
+
+
+
+ATS_MA15 = short-term trend.
+ATS_Z60 = how unusual current ATS is vs last hour (e.g., > 2 = unusually large trades; institutional prints likely).
+
+
+| ATS vs MA15                       | Z60                                                   | Market insight |
+| --------------------------------- | ----------------------------------------------------- | -------------- |
+| ↑ ATS > MA15 and Z60 > 2          | Surge of large prints → possible institutional buying |                |
+| ↓ ATS < MA15 and Z60 < -1.5       | Only small trades → likely retail / low liquidity     |                |
+| ATS rising gradually, MA15 rising | Accumulation — bigger players slowly entering         |                |
+| ATS volatile, Z60 bouncing        | Unstable participation — algo choppiness              |                |
+
+
+
+
+Step 2: What ATS_Z60 means — “how unusual is the current value?”
+
+The Z-score expresses how far the current ATS deviates from its recent mean, measured in units of standard deviation.
+
+Formula recap:
+
+ATS_Z60 = (ATS_now - Mean(ATS_last_60)) / StdDev(ATS_last_60)
+
+
+So, using your last-row numbers (rough estimate):
+
+Let’s assume the mean(ATS_last_60) is ≈ 180
+and StdDev = 103.3
+
+
+ATS_Z60 = (197.17 - 180) / 103.3 = +0.17
+
+
+| ATS_Z60 value    | Meaning                    | Interpretation                                           |
+| ---------------- | -------------------------- | -------------------------------------------------------- |
+| **≈ 0**          | normal                     | Current ATS is near its average (nothing unusual).       |
+| **> +1.5 or +2** | significantly above normal | Large prints entering the market (institutions, blocks). |
+| **< -1.5 or -2** | significantly below normal | Mostly small trades — quiet retail participation.        |
+
+
+
+
+⚙️ Step 3: Why we use both metrics together
+Metric	Function	Analogy
+ATS_STD60		Measures the typical noise in trade sizes.	Like measuring how choppy the sea is.
+ATS_Z60			Measures how far today’s wave is from the normal sea level, in “units of chop”.	A Z of +2 means a wave twice as high as normal — a “big splash”.
+
+So:
+
+STD60 = tells you how rough the sea normally is.
+Z60 = tells you how extreme the current wave is relative to that roughness.
+
+
+
+
+
+🧠 What you have now
+Column		Meaning							Time Window
+ATS		Average trade size for the current 1-min bar		1 bar
+ATS_MA15	Moving average of ATS over 15 bars			short-term trend
+ATS_STD60	Standard deviation of ATS over 60 bars			noise level
+ATS_Z60	Z-score of ATS relative to 60-bar mean & stddev			deviation strength
+
+So you already have signal strength (Z) and noise amplitude (STD), but not signal-to-noise ratio.
+
+
+

@@ -1,0 +1,70 @@
+
+-- 30 Market Insight Project
+--------------------------------------
+
+
+Learn about Azure Functions, Azure Machine Learning, Azure Data Explorer, and Event Hubs (for streaming data).
+
+
+
+displays them in a Blazor or React front-end hosted in Azure.
+
+
+Start learning Python with a financial data analysis focus:
+
+Learn NumPy, Pandas, and Matplotlib (for data manipulation and visualization).
+
+Learn TA-Lib or pandas_ta for technical indicators.
+
+Learn scikit-learn for basic machine learning.
+
+Later: explore PyTorch for deep learning (e.g., predicting price trends, volatility clustering).
+
+
+
+Mini project idea:
+Create a Python notebook that reads historical stock data and:
+
+Calculates moving averages (e.g., 20, 50, 200-day),
+
+Detects crossovers (e.g., golden/death cross),
+
+Sends a Telegram or WhatsApp notification when certain conditions are met.
+
+You can later containerize this notebook and deploy it as a service.
+
+
+[Data Source APIs] → [Data Ingestion Service (.NET)] → [Data Store (SQL + Redis)]
+                                       ↓
+                              [Analysis Engine (Python)]
+                                       ↓
+                         [Signal Service (.NET)] → [Web Dashboard / Alerts]
+
+
+
+
+🧑‍🏫 Andrew Ng’s “AI for Everyone” and Machine Learning Specialization (Coursera)
+
+🧩 DeepLearning.AI TensorFlow Developer Certificate
+
+🧠 Fast.ai Practical Deep Learning for Coders
+
+
+
+
+Week 3 — Indicators v1 (.NET)
+
+Add indicator library (either implement or use Skender.Stock.Indicators on .NET).
+
+Compute & persist:
+
+SMA/EMA (20/50/200), RSI, MACD, ATR, VWAP (session).
+
+Add /indicators/{symbol}?window=… endpoint.
+
+Cache latest indicators in Redis for UI speed.
+
+Deliverable: API returns clean indicator JSON; unit tests for calc correctness.
+
+
+

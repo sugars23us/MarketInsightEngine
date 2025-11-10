@@ -1,0 +1,29 @@
+DECLARE @ticker nvarchar(16) = 'TSLA';
+
+WITH s AS (SELECT StockId FROM dbo.STOCK WHERE Ticker=@ticker),
+t AS (
+  SELECT b.TsUtc, b.Volume, b.TradeCount
+  FROM dbo.BAR b
+  JOIN s ON s.StockId=b.StockId
+  WHERE b.TimeframeId=1 AND b.TradingDate = CONVERT(date, SYSUTCDATETIME())
+),
+m AS (
+  SELECT
+    TsUtc,
+    Volume,
+    TradeCount,
+    CASE WHEN TradeCount>0 THEN 1.0*Volume/TradeCount END AS ATS
+  FROM t
+)
+SELECT
+  TsUtc,
+  ATS,
+  AVG(ATS)  OVER (ORDER BY TsUtc ROWS BETWEEN 14 PRECEDING AND CURRENT ROW)                           AS ATS_MA15,
+  STDEV(ATS)OVER (ORDER BY TsUtc ROWS BETWEEN 59 PRECEDING AND CURRENT ROW)                           AS ATS_STD60,
+  CASE
+    WHEN STDEV(ATS)OVER (ORDER BY TsUtc ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) > 0
+    THEN (ATS - AVG(ATS)OVER (ORDER BY TsUtc ROWS BETWEEN 59 PRECEDING AND CURRENT ROW))
+       /  STDEV(ATS)OVER (ORDER BY TsUtc ROWS BETWEEN 59 PRECEDING AND CURRENT ROW)
+  END AS ATS_Z60
+FROM m
+ORDER BY TsUtc desc;

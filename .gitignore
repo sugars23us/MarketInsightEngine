@@ -1,0 +1,38 @@
+# Visual Studio temporary files, build results, and user-specific files
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Tt]emp/
+TestResults/
+*.tmp
+*.temp
+*.log
+
+# Rider / JetBrains
+.idea/
+
+# NuGet
+*.nupkg
+*.snupkg
+*.nuget.props
+*.nuget.targets
+packages/
+
+# Visual Studio Code
+.vscode/
+
+# Others
+_ReSharper*/
+*.resharper
+*.tsscache
+*.tsbuildinfo
+
+# Ignore generated files
+*.generated.cs

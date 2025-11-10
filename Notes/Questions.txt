@@ -1,0 +1,174 @@
+
+
+If you prefer not to re-implement indicators, you can use:
+
+Python sidecar: TA-Lib, pandas_ta, or ta (if you later add a Python worker)
+
+.NET: Skender.Stock.Indicators
+
+var results = quotes.GetSma(20);
+
+
+Compute the metrics locally, persist to your DB, and you’ll have all moving averages, RSI, MACD, etc. under your own control.
+
+
+
+
+
+
+
+What the FK looks like (composite, fast)
+
+If you choose to keep it:
+
+
+-- Referenced key already exists:
+--   PRIMARY KEY (StockId, TimeframeId, TsUtc) on dbo.BAR
+
+-- Add supporting index on the child (usually not needed for FK checks,
+-- but can help if you delete bars in batches):
+CREATE INDEX IX_IV_FK ON dbo.INDICATOR_VALUE (StockId, TimeframeId, TsUtc);
+
+-- Composite FK
+ALTER TABLE dbo.INDICATOR_VALUE
+ADD CONSTRAINT FK_IV_BAR
+FOREIGN KEY (StockId, TimeframeId, TsUtc)
+REFERENCES dbo.BAR (StockId, TimeframeId, TsUtc);
+
+
+
+
+
+
+Two bar tables: EQUITY_BAR_1MIN (intraday) and EQUITY_BAR_1D (daily). This keeps hot intraday writes separate from long-term daily data and makes indexes lean.
+
+Integer Symbol IDs: SYMBOL(Id INT, Ticker NVARCHAR(16) UNIQUE) keeps keys small and fast.
+
+UTC everywhere; computed TradingDate for easy daily grouping.
+
+Indicators table (daily) to cache SMA20/SMA200 (recompute nightly or after EOD). You can add more columns later without schema churn.
+
+
+1) Keep providers behind an Adapter interface (IMarketDataProvider / IOptionsDataProvider) so you can swap Polygon/Intrinio/Finnhub without touching the rest of the app.
+
+
+2) For each minute m:
+
+baseline_mean[m], baseline_std[m] across past days
+Z-score today: z = (vol_today[m] - mean[m]) / std[m]
+Fire signal when z ≥ 3 and cum-volume ≥ k × ADV thresholds to avoid early-session false positives.
+Also track % of ADV by time (e.g., 11:00 already at 80% ADV → noteworthy).
+
+
+Implement unusual equity volume (z-score)
+
+
+3)
+
+Use System.Net.WebSockets.ClientWebSocket in a .NET Worker Service to connect to Polygon WS.
+Deserialize with System.Text.Json.
+Push raw messages into System.Threading.Channels for backpressure; have a separate consumer that validates/transforms and persists.
+
+
+When Rx.NET helps: if you want rich, in-memory temporal ops (windowing, throttling, joins) before persistence. You can always layer Rx on top of a channel consumer later.
+
+
+
+4)
+
+REST pulls: HttpClient + Typed Clients
+
+Use IHttpClientFactory with named/typed clients for:
+
+Stock/option custom bars backfills.
+
+Snapshots (chain/contract) for greeks/IV/OI.
+
+
+5)
+
+Ingestion Worker (Options):
+
+Start with snapshots via REST (chain snapshot every N seconds for a small universe) to populate OPTION_SNAPSHOT quickly. 
+Polygon
+
+Later add WS trades/quotes for real flow analytics. 
+Polygon
++1
+
+
+6)
+
+Signal Engine (.NET):
+
+Timer every 5–15s reads latest bars from Redis (fallback to SQL).
+
+Compute indicators (or read from INDICATOR cache).
+
+Evaluate rules (MA cross, RSI, unusual volume z-score, S/R touch).
+
+Deduplicate (by rule+symbol+state) and push to Telegram.
+
+
+7)
+
+Backfills (REST):
+
+On startup or nightly, call Stocks REST aggregates to fill gaps. 
+Polygon
+
+For options, use historical trades/quotes when you begin backtesting flow logic. 
+Polygon
++1
+
+
+
+
+
+
+
+1) Add indicator library (either implement or use Skender.Stock.Indicators on .NET) ??? 
+   what do u recommend?
+
+
+
+2) Implement a simple, composable rule DSL (C#) for alerts:
+
+Examples:
+
+CrossOver(SMA20, PriceClose)
+
+RSI < 30 or RSI crossUp 30
+
+Touch(SupportZone, tolerance=0.3%)
+
+Store user rules in ALERT_RULE(id, user_id, symbol, expr, params, enabled).
+
+Background SignalRunner checks latest bars+indicators → emits SIGNAL(id, ts, rule_id, strength, payload_json).
+
+Add notifications:
+
+Telegram Bot (fastest to approve) or Email; Twilio WhatsApp if you want (requires business verification).
+
+Add rate-limit & idempotent alerts (avoid spam).
+
+
+3)  UI (pick Blazor WASM for all-.NET or Next.js if you prefer React).
+
+Pages:
+
+Dashboard: current signals, watchlist snapshot.
+
+Symbol view: candlestick + overlays (MA20/50/200, RSI pane, MACD).
+
+Rules: create/enable/disable rules; test run on history.
+
+Use API for data; cache charts client-side.
+
+Deliverable: you can visually confirm a signal and the chart that triggered it.
+
+
+
+3)  Charts: LightweightCharts (web) or Plotly; Blazor or Next.js UI
+
+

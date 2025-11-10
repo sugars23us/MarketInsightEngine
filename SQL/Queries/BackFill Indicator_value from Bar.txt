@@ -1,0 +1,80 @@
+DECLARE @FromDate date = NULL;  -- e.g. '2025-10-20'
+DECLARE @ToDate   date = NULL;  -- e.g. '2025-10-27'
+
+;WITH scope_bars AS (
+    SELECT b.StockId, b.TimeframeId, b.TsUtc, b.Volume, b.TradeCount
+    FROM dbo.BAR b
+    WHERE b.TimeframeId = 1
+      AND (@FromDate IS NULL OR b.TradingDate >= @FromDate)
+      AND (@ToDate   IS NULL OR b.TradingDate <= @ToDate)
+),
+m AS (
+    SELECT
+        StockId, TimeframeId, TsUtc, Volume, TradeCount,
+        CASE WHEN TradeCount > 0 THEN 1.0 * Volume / TradeCount END AS ATS
+    FROM scope_bars
+),
+w AS (
+    SELECT
+        StockId, TimeframeId, TsUtc,
+        ATS,
+        AVG(ATS)  OVER (PARTITION BY StockId ORDER BY TsUtc
+                        ROWS BETWEEN 14 PRECEDING AND CURRENT ROW) AS ATS_MA15,
+        AVG(ATS)  OVER (PARTITION BY StockId ORDER BY TsUtc
+                        ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS ATS_MA60,
+
+        AVG(ATS)  OVER (PARTITION BY StockId ORDER BY TsUtc
+                        ROWS BETWEEN 14 PRECEDING AND CURRENT ROW) AS ATS_MEAN15,
+        STDEV(ATS)OVER (PARTITION BY StockId ORDER BY TsUtc
+                        ROWS BETWEEN 14 PRECEDING AND CURRENT ROW) AS ATS_STD15,
+
+        AVG(ATS)  OVER (PARTITION BY StockId ORDER BY TsUtc
+                        ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS ATS_MEAN60,
+        STDEV(ATS)OVER (PARTITION BY StockId ORDER BY TsUtc
+                        ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS ATS_STD60
+    FROM m
+),
+x AS (
+    SELECT
+        StockId, TimeframeId, TsUtc,
+        ATS,
+        ATS_MA15,
+        ATS_MA60,
+        ATS_STD60,
+        CASE WHEN ATS_STD15 > 0 AND ATS IS NOT NULL AND ATS_MEAN15 IS NOT NULL
+             THEN (ATS - ATS_MEAN15) / ATS_STD15 END AS ATS_Z15,
+        CASE WHEN ATS_STD60 > 0 AND ATS IS NOT NULL AND ATS_MEAN60 IS NOT NULL
+             THEN (ATS - ATS_MEAN60) / ATS_STD60 END AS ATS_Z60
+    FROM w
+)
+SELECT
+    StockId,
+    TimeframeId,
+    TsUtc,
+    v.MetricCode,
+    CAST(v.Val AS decimal(19,8)) AS Value,
+    ParamsJson = NULL
+INTO #ind
+FROM x
+CROSS APPLY (VALUES
+    ('ATS',         CAST(ATS       AS float)),
+    ('ATS_MA_15',   CAST(ATS_MA15  AS float)),
+    ('ATS_MA_60',   CAST(ATS_MA60  AS float)),
+    ('ATS_Z_15',    CAST(ATS_Z15   AS float)),
+    ('ATS_Z_60',    CAST(ATS_Z60   AS float))
+) v(MetricCode, Val)
+WHERE v.Val IS NOT NULL;
+
+MERGE dbo.INDICATOR_VALUE AS t
+USING #ind AS s
+   ON t.StockId=s.StockId
+  AND t.TimeframeId=s.TimeframeId
+  AND t.TsUtc=s.TsUtc
+  AND t.MetricCode=s.MetricCode
+WHEN MATCHED THEN
+  UPDATE SET t.Value=s.Value, t.ParamsJson=s.ParamsJson, t.UpdatedUtc=SYSUTCDATETIME()
+WHEN NOT MATCHED THEN
+  INSERT (StockId,TimeframeId,TsUtc,MetricCode,ParamsJson,Value,UpdatedUtc)
+  VALUES (s.StockId,s.TimeframeId,s.TsUtc,s.MetricCode,s.ParamsJson,s.Value,SYSUTCDATETIME());
+
+DROP TABLE #ind;
