@@ -1,38 +1,35 @@
-# Visual Studio temporary files, build results, and user-specific files
-.vs/
-*.user
-*.suo
-*.userosscache
-*.sln.docstates
-
-# Build results
+# Build folders
 [Bb]in/
 [Oo]bj/
 [Ll]og/
 [Tt]emp/
 TestResults/
+
+# User-specific and IDE files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# NuGet artifacts
+*.nupkg
+*.snupkg
+packages/
+
+# Temporary / generated files
 *.tmp
 *.temp
 *.log
-
-# Rider / JetBrains
-.idea/
-
-# NuGet
-*.nupkg
-*.snupkg
-*.nuget.props
-*.nuget.targets
-packages/
-
-# Visual Studio Code
-.vscode/
-
-# Others
-_ReSharper*/
-*.resharper
-*.tsscache
+*.generated.cs
 *.tsbuildinfo
 
-# Ignore generated files
-*.generated.cs
+# ReSharper / Rider
+_ReSharper*/
+*.resharper
+
+# SQL / cache files (optional)
+*.vsidx
+*.dbmdl
