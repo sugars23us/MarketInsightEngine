@@ -1,0 +1,108 @@
+
+
+
+
+
+
+IngestionWorker has these 2 classes inside of it:
+
+
+
+ - IMarketBarSource
+	IAsyncEnumerable<MarketBar> ReadAllAsync(CancellationToken cancellationToken);
+
+	This takes a MarketBar (representing the Bar table) struct defined in the MarketInsight.Application project itself.
+	Is this the right place for this class?
+	Let's rename the underlying table to MArketBar too
+
+
+ - IStockRegistry
+	Task<TickerMeta?> GetMetaAsync(int stockId, CancellationToken ct = default);
+
+	The TickerMeta needs to be renamed to either Ticker or Stock something
+	TickerMeta is defined in the Shared project under DTOs as a class
+
+	What's the right place for these classes? are they DTOs? Are they Domain classes or Data Access classes? how many layers do we need?
+	Can we use the repository patter and unit of work here with EF or does it not apply and may affect performance of the system?
+
+Why ReadAllAsync returns IAsyncEnumerable<MarketBar>  and GetMetaAsync returns Task<TickerMeta?> ?
+
+
+- IIndicatorSink 
+	Task UpsertAsync(IReadOnlyCollection<IndicatorValue> batch, CancellationToken cancellationToken = default);
+	IndicatorValue defined in MarketInsight.Application project as struct. Is this correct?
+	
+
+
+
+can you access the code from a repository or do I need to paste all the clasees one by one?
+
+
+Why do we need ConcurrentDictionary<(int, byte), SymbolSession> _sessions  in IndicatorEngine? what is the purpose and what role do they play?
+
+
+
+What is the role of the RollingWindow?  what exactly is it used for and why is it needed? provide examples.
+
+
+
+
+
+1) Ingestion worker 
+	- Get a Bar from PolygonSocketClient
+	- Get Ticker (Stock) MEtadate such as float, etc and put it in a cache
+	- var outputs =  _engine.ProcessBar(bar, tickerMeta);
+	- _indicatorSink.UpsertAsync(outputs, stoppingToken)
+
+2) Engine
+
+	has 
+	IReadOnlyList<IIndicatorCalculator> _calculators;
+	ConcurrentDictionary<(int, byte), SymbolSession> _sessions
+
+
+
+
+why do we need a Flush method ion the IndicatorWriter? why convert to array form list and why we need a count property?
+
+
+
+
+Why the AtsCalculator needs 2 RollingWindows with capacity of 15 but named differently?
+what is the purpose of the rolling windows?
+
+
+
+Is it ok to have a common state class in each calculator?
+
+
+
+what is TVP + stored proc for bulk upserts ???
+
+
+
+
+
+This logic in IngestionWorker can be encapsulated:
+
+if (!tickerMetadataCache.TryGetValue(bar.StockId, out var tickerMeta))
+{
+    tickerMeta = await _stockRegistry.GetMetaAsync(bar.StockId, stoppingToken)
+                               .ConfigureAwait(false);
+    
+    tickerMetadataCache[bar.StockId] = tickerMeta;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+

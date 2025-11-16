@@ -1,3 +1,8 @@
+
+# local config
+appsettings.Development.json
+appsettings.Local.json
+
 # Build folders
 [Bb]in/
 [Oo]bj/

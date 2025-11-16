@@ -20,7 +20,7 @@ SELECT
   TradeCount,
   CASE WHEN TradeCount > 0 THEN 1.0 * Volume / TradeCount ELSE NULL END AS AvgTradeSize
 FROM t
-ORDER BY TsUtc;
+ORDER BY TsUtc desc;
 
 
 
