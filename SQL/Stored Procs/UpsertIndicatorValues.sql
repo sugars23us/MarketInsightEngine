@@ -1,30 +1,28 @@
-﻿-- Idempotent create, then replace body (works on SQL Server)
-IF OBJECT_ID(N'dbo.UpsertIndicatorValues', N'P') IS NULL
-BEGIN
-    EXEC('CREATE PROCEDURE dbo.UpsertIndicatorValues AS SET NOCOUNT ON;');
-END;
+USE [MarketInsight]
 GO
 
-CREATE OR ALTER PROCEDURE dbo.UpsertIndicatorValues
+/****** Object:  StoredProcedure [dbo].[UpsertIndicatorValues]    Script Date: 18/11/2025 08:17:21 ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+-- 2) Upsert proc
+CREATE   PROCEDURE [dbo].[UpsertIndicatorValues]
     @Rows dbo.IndicatorValueTvp READONLY
 AS
 BEGIN
     SET NOCOUNT ON;
 
-    ;WITH src AS (
-        SELECT *
-        FROM @Rows
-        WHERE MetricCode IS NOT NULL
-          AND Period IS NOT NULL
-          AND TimeframeId IS NOT NULL
-    )
     MERGE dbo.INDICATOR_VALUE WITH (HOLDLOCK) AS t
-    USING src AS s
+    USING @Rows AS s
        ON t.StockId     = s.StockId
       AND t.TimeframeId = s.TimeframeId
       AND t.TsUtc       = s.TsUtc
       AND t.MetricCode  = s.MetricCode
-      AND t.Period      = s.Period
+      AND ISNULL(t.Period,-1)=ISNULL(s.Period,-1)
     WHEN MATCHED THEN
       UPDATE SET
          t.Value      = s.Value,
@@ -35,3 +33,5 @@ BEGIN
       VALUES (s.StockId,s.TimeframeId,s.TsUtc,s.MetricCode,s.Period,s.ParamsJson,s.Value,SYSUTCDATETIME());
 END
 GO
+
+
