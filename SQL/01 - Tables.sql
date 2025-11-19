@@ -64,13 +64,13 @@ CREATE TABLE dbo.STOCK (
     Ticker       NVARCHAR(16)   NOT NULL UNIQUE,     -- e.g., MSFT
     Name         NVARCHAR(128)  NULL,
     ExchangeId   SMALLINT       NULL,
+    FloatShares   BIGINT       NULL,   -- for rotations
+    Adv63         BIGINT       NULL,    -- 3M ADV (approx)
     IsActive     BIT            NOT NULL DEFAULT(1),
     CreatedUtc   DATETIME2(0)   NOT NULL DEFAULT (SYSUTCDATETIME()),
     CONSTRAINT FK_STOCK_EXCHANGE FOREIGN KEY (ExchangeId) REFERENCES dbo.EXCHANGE(ExchangeId)
 );
 GO
-
-
 
 
 /* ======================================================================
@@ -282,5 +282,5 @@ INSERT dbo.APP_USER (Email, DisplayName) VALUES ('thomas.sioungaris@gmail.com','
 -- Add a few stocks
 IF NOT EXISTS (SELECT 1 FROM dbo.STOCK WHERE Ticker='MSFT')
 INSERT dbo.STOCK (Ticker, Name, ExchangeId) VALUES
-('MSFT','Microsoft',1), ('AAPL','Apple',1), ('TSLA','Tesla',1);
+ ('TSLA','Tesla',1), ('RZLV','Resolve AI',1), ('PATH','UI Path',1), ('MRVL','Marvel Technology',1);
 GO

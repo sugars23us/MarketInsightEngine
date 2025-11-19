@@ -20,19 +20,22 @@ namespace MarketInsight.Application.Engine
         private readonly ILogger<IngestionWorker> _logger;
         private readonly IndicatorEngine _engine;
         private readonly IIndicatorSink _indicatorSink;
+        private readonly IBarSink _barSink;
         private readonly IMarketBarSource _marketBarSource;
         private readonly IStockRegistry _stockRegistry;
 
         public IngestionWorker(
             ILogger<IngestionWorker> logger,
             IndicatorEngine engine,
-            IIndicatorSink sink,
+            IIndicatorSink indicatorSink,
+            IBarSink barSink,
             IMarketBarSource source,
             IStockRegistry stockRegistry)
         {
             _logger = logger;
             _engine = engine;
-            _indicatorSink = sink;
+            _indicatorSink = indicatorSink;
+            _barSink = barSink;
             _marketBarSource = source;
             _stockRegistry = stockRegistry;
         }
@@ -48,14 +51,19 @@ namespace MarketInsight.Application.Engine
             {
                 await foreach (var bar in _marketBarSource.ReadAllAsync(stoppingToken).ConfigureAwait(false))
                 {
+                    // 1) Persist raw bar. TODO: Optimize so we can pass a collection
+                    await _barSink.UpsertAsync(new[] { bar }, stoppingToken).ConfigureAwait(false);
+
+                    // 2) Get/calc metadata
                     if (!tickerMetadataCache.TryGetValue(bar.StockId, out var tickerMeta))
                     {
-                        tickerMeta = await _stockRegistry.GetMetaAsync(bar.StockId, stoppingToken)
+                        tickerMeta = await _stockRegistry.GetTickerMetaAsync(bar.StockId, stoppingToken)
                                                    .ConfigureAwait(false);
                         
                         tickerMetadataCache[bar.StockId] = tickerMeta;
                     }
 
+                    // 3) Run indicators
                     var outputs = _engine.ProcessBar(bar, tickerMeta);
                     
                     if (outputs.Count > 0)

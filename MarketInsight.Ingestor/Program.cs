@@ -39,6 +39,7 @@ var hostBuilder = Host.CreateDefaultBuilder(args)
         // 5. Application services (now singleton-safe)
         services.AddSingleton<IStockRegistry, StockRegistryEf>();
         services.AddSingleton<IIndicatorSink, SqlIndicatorWriter>();
+        services.AddSingleton<IBarSink, SqlBarWriter>();
         services.AddSingleton<IMarketBarSource, PolygonSocketClient>();
 
         // 6. Calculators

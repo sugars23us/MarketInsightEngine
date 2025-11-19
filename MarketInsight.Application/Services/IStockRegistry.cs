@@ -11,6 +11,8 @@ namespace MarketInsight.Application.Services
     /// </summary>
     public interface IStockRegistry
     {
-        Task<TickerMeta?> GetMetaAsync(int stockId, CancellationToken ct = default);
+        Task<TickerMeta?> GetTickerMetaAsync(int stockId, CancellationToken ct = default);
+        Task<TickerMeta?> GetTickerMetaAsync(string ticker, CancellationToken ct = default);
+        Task<TickerMeta> CreateTickerMetaIfMissingAsync(string ticker, CancellationToken ct = default);
     }
 }
