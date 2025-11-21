@@ -1,30 +1,32 @@
-﻿using System;
+﻿// MarketInsight.Application/Indicators/MomentumCalculator.cs
+using System;
 using MarketInsight.Application.Engine;
+using MarketInsight.Application.Interfaces;
 
 namespace MarketInsight.Application.Indicators
 {
     /// <summary>
-    /// Computes RSI_14, OBV_D, CVD_1M.
+    /// Computes RSI_14, OBV_D (session), CVD_1M (cumulative volume delta per minute).
     /// </summary>
     public sealed class MomentumCalculator : IIndicatorCalculator
     {
         private sealed class State
         {
-            public Rsi14Helper Rsi = new();
+            public Rsi14Helper Rsi { get; } = new();
             public decimal PrevClose;
-            public decimal Obv;
-            public long Cvd;
+            public decimal Obv;     // On-Balance Volume (session cumulative)
+            public long Cvd;        // Cumulative Volume Delta (signed by direction)
         }
 
         private static State GetState(SymbolSession session)
         {
             const string key = "MOM";
-            if (!session.State.TryGetValue(key, out var obj) || obj is not State st)
+            if (!session.State.TryGetValue(key, out var obj) || obj is not State state)
             {
-                st = new State();
-                session.State[key] = st;
+                state = new State();
+                session.State[key] = state;
             }
-            return st;
+            return state;
         }
 
         public void OnSessionStarted(SymbolSession session)
@@ -32,30 +34,42 @@ namespace MarketInsight.Application.Indicators
             session.State["MOM"] = new State();
         }
 
-        public void OnBar(in MarketBar bar, SymbolSession session, IndicatorWriter writer)
+        public void OnCandle(in EquityCandle candle, SymbolSession session, IndicatorWriter writer)
         {
-            var st = GetState(session);
+            var state = GetState(session);
 
-            if (st.PrevClose == 0m)
+            // First candle of session — initialize
+            if (state.PrevClose == 0m)
             {
-                st.PrevClose = bar.Close;
+                state.PrevClose = candle.Close;
+                return; // RSI needs at least one delta
             }
 
-            var delta = (double)(bar.Close - st.PrevClose);
-            st.Rsi.AddDelta(delta);
-            var rsi = st.Rsi.GetValue();
+            // RSI_14
+            var delta = (double)(candle.Close - state.PrevClose);
+            state.Rsi.AddDelta(delta);
+            var rsi = state.Rsi.GetValue();
 
-            if (bar.Close > st.PrevClose) st.Obv += bar.Volume;
-            else if (bar.Close < st.PrevClose) st.Obv -= bar.Volume;
+            // OBV_D — session On-Balance Volume
+            if (candle.Close > state.PrevClose)
+                state.Obv += candle.Volume;
+            else if (candle.Close < state.PrevClose)
+                state.Obv -= candle.Volume;
+            // unchanged = no change
 
-            if (bar.Close >= bar.Open) st.Cvd += bar.Volume;
-            else st.Cvd -= bar.Volume;
+            // CVD_1M — Cumulative Volume Delta (signed by close vs open)
+            if (candle.Close >= candle.Open)
+                state.Cvd += candle.Volume;
+            else
+                state.Cvd -= candle.Volume;
 
-            writer.Add(bar, "RSI_14", 14, (decimal)rsi);
-            writer.Add(bar, "OBV_D", 0, st.Obv);
-            writer.Add(bar, "CVD_1M", 1, st.Cvd);
+            // Emit indicators
+            writer.Add(candle, "RSI_14", 14, (decimal)rsi);
+            writer.Add(candle, "OBV_D", 0, state.Obv);
+            writer.Add(candle, "CVD_1M", 1, state.Cvd);
 
-            st.PrevClose = bar.Close;
+            // Update for next bar
+            state.PrevClose = candle.Close;
         }
     }
 }

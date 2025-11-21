@@ -1,21 +1,20 @@
-using System;
-using System.Threading.Tasks;
 using MarketInsight.Application.Engine;
 using MarketInsight.Application.Indicators;
+using MarketInsight.Application.Interfaces;
 using MarketInsight.Application.Services;
 using MarketInsight.Infrastructure.Logging;
 using MarketInsight.Infrastructure.Persistence;
-using MarketInsight.Infrastructure.Services;
+using MarketInsight.Infrastructure.Streaming;
 using MarketInsight.Shared.Options;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Serilog;
 
-var hostBuilder = Host.CreateDefaultBuilder(args)
+internal class Program
+{
+    private static async Task Main(string[] args)
+    {
+        var hostBuilder = Host.CreateDefaultBuilder(args)
     .UseWindowsService()
     .UseSerilog((ctx, lc) => lc.ReadFrom.Configuration(ctx.Configuration))
     .ConfigureServices((ctx, services) =>
@@ -37,10 +36,10 @@ var hostBuilder = Host.CreateDefaultBuilder(args)
         });
 
         // 5. Application services (now singleton-safe)
-        services.AddSingleton<IStockRegistry, StockRegistryEf>();
-        services.AddSingleton<IIndicatorSink, SqlIndicatorWriter>();
-        services.AddSingleton<IBarSink, SqlBarWriter>();
-        services.AddSingleton<IMarketBarSource, PolygonSocketClient>();
+        services.AddSingleton<IEquityRegistry, EquityRegistry>();
+        services.AddSingleton<IEquityIndicatorSink, SqlEquityIndicatorWriter>();
+        services.AddSingleton<IEquityCandleSink, SqlEquityCandleWriter>();
+        services.AddSingleton<IEquityCandleSource, PolygonSocketClient>();
 
         // 6. Calculators
         services.AddSingleton<IIndicatorCalculator, AtsCalculator>();
@@ -52,6 +51,8 @@ var hostBuilder = Host.CreateDefaultBuilder(args)
         services.AddHostedService<IngestionWorker>();
     });
 
-var host = hostBuilder.Build();
+        var host = hostBuilder.Build();
 
-await host.RunAsync();
+        await host.RunAsync();
+    }
+}

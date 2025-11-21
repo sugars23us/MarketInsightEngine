@@ -1,12 +1,14 @@
-﻿using System;
+﻿// MarketInsight.Application/Indicators/FlowCalculator.cs
+using System;
 using MarketInsight.Application.Engine;
+using MarketInsight.Application.Interfaces;
 using MarketInsight.Shared.DTOs;
-using MarketInsight.Shared.Models;
 
 namespace MarketInsight.Application.Indicators
 {
     /// <summary>
     /// Computes VWAP_DEV, R (float rotations), RVOL_63, EFF, BACKSIDE.
+    /// Uses session VWAP ("a" field) and ATS ("z" field) from Polygon.
     /// </summary>
     public sealed class FlowCalculator : IIndicatorCalculator
     {
@@ -31,72 +33,77 @@ namespace MarketInsight.Application.Indicators
                 LastHodTsUtc = DateTime.MinValue,
                 PeakRvol63 = 0m
             };
-
-            // META is populated by IngestionWorker before first bar; we don't touch it here.
         }
 
         private static State GetState(SymbolSession session)
         {
-            if (!session.State.TryGetValue("FLOW", out var obj) || obj is not State st)
+            if (!session.State.TryGetValue("FLOW", out var obj) || obj is not State state)
             {
-                st = new State();
-                session.State["FLOW"] = st;
+                state = new State();
+                session.State["FLOW"] = state;
             }
-            return st;
+            return state;
         }
 
-        private static TickerMeta? GetMeta(SymbolSession session)
+        private static Equity? GetEquity(SymbolSession session)
         {
-            session.State.TryGetValue("META", out var obj);
-            return obj as TickerMeta;
+            session.State.TryGetValue("EQUITY", out var obj);
+            return obj as Equity;
         }
 
-        public void OnBar(in Engine.MarketBar bar, SymbolSession session, IndicatorWriter writer)
+        public void OnCandle(in EquityCandle candle, SymbolSession session, IndicatorWriter writer)
         {
-            var st = GetState(session);
-            var meta = GetMeta(session);
+            var state = GetState(session);
+            var equity = GetEquity(session);
 
-            if (st.SessionOpen == 0m)
-                st.SessionOpen = bar.Open;
+            // First bar of session — capture open
+            if (state.SessionOpen == 0m)
+                state.SessionOpen = candle.Open;
 
-            st.CumVolume += bar.Volume;
+            state.CumVolume += candle.Volume;
 
-            if (bar.High > st.SessionHigh)
+            // Track session high
+            if (candle.High > state.SessionHigh)
             {
-                st.SessionHigh = bar.High;
-                st.LastHodTsUtc = bar.TsUtc;
+                state.SessionHigh = candle.High;
+                state.LastHodTsUtc = candle.TsUtc;
             }
 
+            // VWAP_DEV — using session VWAP ("a" field)
             decimal vwapDev = 0m;
-            if (bar.Vwap.HasValue && bar.Vwap.Value != 0m)
-                vwapDev = (bar.Close - bar.Vwap.Value) / bar.Vwap.Value;
+            if (candle.Vwap.HasValue && candle.Vwap.Value != 0m)
+                vwapDev = (candle.Close - candle.Vwap.Value) / candle.Vwap.Value;
 
-            decimal R = 0m;
-            if (meta?.FreeFloatShares is > 0)
-                R = (decimal)st.CumVolume / meta.FreeFloatShares.Value;
+            // R — float rotations
+            decimal r = 0m;
+            if (equity?.FloatShares is > 0)
+                r = (decimal)state.CumVolume / equity.FloatShares.Value;
 
+            // RVOL_63 — relative volume
             decimal rvol63 = 0m;
-            if (meta?.AvgDailyVolume3M is > 0)
-                rvol63 = (decimal)st.CumVolume / meta.AvgDailyVolume3M.Value;
+            if (equity?.AvgVolume3M is > 0)
+                rvol63 = (decimal)state.CumVolume / equity.AvgVolume3M.Value;
 
+            // EFF — efficiency
             decimal eff = 0m;
-            if (st.SessionOpen != 0m && R > 0m)
+            if (state.SessionOpen != 0m && r > 0m)
             {
-                var pctMove = (bar.Close / st.SessionOpen) - 1m;
-                eff = pctMove / R;
+                var pctMove = (candle.Close / state.SessionOpen) - 1m;
+                eff = pctMove / r;
             }
 
-            bool noNewHigh = (bar.TsUtc - st.LastHodTsUtc) >= _noNewHighWindow;
-            bool belowVwap = bar.Vwap.HasValue && bar.Close < bar.Vwap.Value;
-            bool backside = (R >= 3m) && belowVwap && noNewHigh && (rvol63 < st.PeakRvol63);
+            // Backside detection
+            bool noNewHigh = (candle.TsUtc - state.LastHodTsUtc) >= _noNewHighWindow;
+            bool belowVwap = candle.Vwap.HasValue && candle.Close < candle.Vwap.Value;
+            bool backside = r >= 3m && belowVwap && noNewHigh && rvol63 < state.PeakRvol63;
 
-            st.PeakRvol63 = Math.Max(st.PeakRvol63, rvol63);
+            state.PeakRvol63 = Math.Max(state.PeakRvol63, rvol63);
 
-            writer.Add(bar, "VWAP_DEV", 0, vwapDev);
-            writer.Add(bar, "R", 0, R);
-            writer.Add(bar, "RVOL_63", 63, rvol63);
-            writer.Add(bar, "EFF", 0, eff);
-            writer.Add(bar, "BACKSIDE", 0, backside ? 1m : 0m);
+            writer.Add(candle, "VWAP_DEV", 0, vwapDev);
+            writer.Add(candle, "R", 0, r);
+            writer.Add(candle, "RVOL_63", 63, rvol63);
+            writer.Add(candle, "EFF", 0, eff);
+            writer.Add(candle, "BACKSIDE", 0, backside ? 1m : 0m);
         }
     }
 }

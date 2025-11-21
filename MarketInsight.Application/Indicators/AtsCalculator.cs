@@ -1,31 +1,33 @@
-﻿using System;
+﻿// MarketInsight.Application/Indicators/AtsCalculator.cs
+using System;
 using MarketInsight.Application.Engine;
+using MarketInsight.Application.Interfaces;
 using MarketInsight.Shared.Utils;
 
 namespace MarketInsight.Application.Indicators
 {
     /// <summary>
-    /// Computes ATS, ATS_MA_15, ATS_MA_60, ATS_Z_15, ATS_Z_60.
-    /// Uses O(1) rolling windows per symbol per session.
+    /// Computes ATS moving averages and Z-scores.
+    /// ATS is received directly from Polygon's "z" field — no calculation needed.
     /// </summary>
     public sealed class AtsCalculator : IIndicatorCalculator
     {
         private sealed class State
         {
-            public RollingWindow Ma15 = new(15);
-            public RollingWindow Stats15 = new(15);
-            public RollingWindow Stats60 = new(60);
+            public RollingWindow Ma15 { get; } = new(15);
+            public RollingWindow Stats15 { get; } = new(15);
+            public RollingWindow Stats60 { get; } = new(60);
         }
 
         private static State GetState(SymbolSession session)
         {
             const string key = "ATS";
-            if (!session.State.TryGetValue(key, out var obj) || obj is not State st)
+            if (!session.State.TryGetValue(key, out var obj) || obj is not State state)
             {
-                st = new State();
-                session.State[key] = st;
+                state = new State();
+                session.State[key] = state;
             }
-            return st;
+            return state;
         }
 
         public void OnSessionStarted(SymbolSession session)
@@ -33,44 +35,62 @@ namespace MarketInsight.Application.Indicators
             session.State["ATS"] = new State();
         }
 
-        public void OnBar(in MarketBar bar, SymbolSession session, IndicatorWriter writer)
+        public void OnCandle (in EquityCandle candle, SymbolSession session, IndicatorWriter writer)
         {
-            var state = GetState(session);
-
-            if (bar.TradeCount is null or <= 0)
+            // Polygon already gives us exact ATS in the "z" field
+            if (!candle.Ats.HasValue || candle.Ats <= 0)
                 return;
 
-            var ats = (decimal)bar.Volume / bar.TradeCount.Value;
+            var ats = candle.Ats.Value;
+            var state = GetState(session);
 
-            state.Ma15.Add((double)ats);
-            state.Stats15.Add((double)ats);
-            state.Stats60.Add((double)ats);
+            double atsDouble = ats;
 
-            decimal ma15 = ToDecimal(state.Ma15.Mean);
-            decimal ma60 = ToDecimal(state.Stats60.Mean);
-            decimal z15 = ComputeZ(ats, state.Stats15);
-            decimal z60 = ComputeZ(ats, state.Stats60);
+            state.Ma15.Add(atsDouble);
+            state.Stats15.Add(atsDouble);
+            state.Stats60.Add(atsDouble);
 
-            writer.Add(bar, "ATS", 0, ats);
-            if (ma15 != 0m) writer.Add(bar, "ATS_MA_15", 15, ma15);
-            if (ma60 != 0m) writer.Add(bar, "ATS_MA_60", 60, ma60);
-            if (z15 != 0m) writer.Add(bar, "ATS_Z_15", 15, z15);
-            if (z60 != 0m) writer.Add(bar, "ATS_Z_60", 60, z60);
+            // Raw ATS value
+            writer.Add(candle, "ATS", 0, (decimal)ats);
+
+            // Moving averages
+            if (state.Ma15.Count >= 15)
+            {
+                var ma15 = (decimal)state.Ma15.Mean;
+                writer.Add(candle, "ATS_MA_15", 15, ma15);
+            }
+
+            if (state.Stats60.Count >= 60)
+            {
+                var ma60 = (decimal)state.Stats60.Mean;
+                writer.Add(candle, "ATS_MA_60", 60, ma60);
+            }
+
+            // Z-scores
+            if (state.Stats15.Count >= 2)
+            {
+                var z15 = ComputeZ(atsDouble, state.Stats15);
+                if (!double.IsNaN(z15))
+                    writer.Add(candle, "ATS_Z_15", 15, (decimal)z15);
+            }
+
+            if (state.Stats60.Count >= 2)
+            {
+                var z60 = ComputeZ(atsDouble, state.Stats60);
+                if (!double.IsNaN(z60))
+                    writer.Add(candle, "ATS_Z_60", 60, (decimal)z60);
+            }
         }
 
-        private static decimal ComputeZ(decimal x, RollingWindow w)
+        private static double ComputeZ(double x, RollingWindow w)
         {
             var mean = w.Mean;
             var std = w.StdSample;
-            if (double.IsNaN(mean) || double.IsNaN(std) || std <= 0.0)
-                return 0m;
 
-            var m = (decimal)mean;
-            var s = (decimal)std;
-            return s == 0m ? 0m : (x - m) / s;
+            if (double.IsNaN(mean) || double.IsNaN(std) || std <= 0.0001)
+                return 0.0;
+
+            return (x - mean) / std;
         }
-
-        private static decimal ToDecimal(double d)
-            => double.IsNaN(d) ? 0m : (decimal)d;
     }
 }

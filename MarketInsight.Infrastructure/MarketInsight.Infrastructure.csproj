@@ -20,7 +20,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MarketInsight.Application\MarketInsight.Application.csproj" />
-    <ProjectReference Include="..\MarketInsight.Domain\MarketInsight.Domain.csproj" />
     <ProjectReference Include="..\MarketInsight.Shared\MarketInsight.Shared.csproj" />
   </ItemGroup>
 
