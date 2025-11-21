@@ -1,87 +1,70 @@
-﻿using System;
+﻿// MarketInsight.Infrastructure.Streaming/PolygonSocketClient.cs
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net.WebSockets;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using MarketInsight.Application.Engine;
+using MarketInsight.Application.Interfaces;
+using MarketInsight.Shared.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using MarketInsight.Application.Engine;
-using MarketInsight.Shared.Options;
-using System.Collections.Concurrent;
-using System.Runtime.CompilerServices;
 
-namespace MarketInsight.Application.Services
+namespace MarketInsight.Infrastructure.Streaming
 {
     /// <summary>
-    /// Polygon WebSocket adapter implementing IMarketBarSource.
+    /// Polygon WebSocket real-time source → yields EquityCandle records.
+    /// Implements IEquityCandleSource.
     /// </summary>
-    public sealed class PolygonSocketClient : IMarketBarSource, IAsyncDisposable
+    public sealed class PolygonSocketClient : IEquityCandleSource, IAsyncDisposable
     {
-        private readonly ConcurrentDictionary<string, int> _symbolToIdCache = new();
         private readonly PolygonOptions _opt;
-        private readonly IStockRegistry _stockRegistry;
+        private readonly IEquityRegistry _equityRegistry;
         private readonly ILogger<PolygonSocketClient> _logger;
 
-        public PolygonSocketClient(IStockRegistry stockRegistry, IOptions<PolygonOptions> opt, ILogger<PolygonSocketClient> logger)
+        // Lifetime cache: symbol → EquityId (persists across reconnects)
+        private readonly ConcurrentDictionary<string, int> _symbolToIdCache
+            = new(StringComparer.OrdinalIgnoreCase);
+
+        public PolygonSocketClient(
+            IOptions<PolygonOptions> options,
+            IEquityRegistry equityRegistry,
+            ILogger<PolygonSocketClient> logger)
         {
-            _opt = opt.Value;
-            _stockRegistry = stockRegistry;
+            _opt = options.Value;
+            _equityRegistry = equityRegistry;
             _logger = logger;
         }
 
-        // MarketInsight.Application.Services.PolygonSocketClient.cs
-        public async IAsyncEnumerable<MarketBar> ReadAllAsync(
-            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        public async IAsyncEnumerable<EquityCandle> ReadAllAsync(
+            [EnumeratorCancellation] CancellationToken ct = default)
         {
-            while (!cancellationToken.IsCancellationRequested)
+            while (!ct.IsCancellationRequested)
             {
                 using var ws = new ClientWebSocket();
-
-                // We let exceptions bubble up (they'll stop the worker) or you can wrap the whole loop at a higher level.
                 ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(15);
-                await ws.ConnectAsync(new Uri(_opt.StocksWsUrl), cancellationToken).ConfigureAwait(false);
 
-                await SendAsync(ws, $@"{{""action"":""auth"",""params"":""{_opt.ApiKey}""}}", cancellationToken);
-                await SendAsync(ws, $@"{{""action"":""subscribe"",""params"":""{_opt.Symbols}""}}", cancellationToken);
+                await ws.ConnectAsync(new Uri(_opt.StocksWsUrl), ct).ConfigureAwait(false);
 
-                _logger.LogInformation("Connected & subscribed to Polygon: {Params}", _opt.Symbols);
+                await SendAsync(ws, $@"{{""action"":""auth"",""params"":""{_opt.ApiKey}""}}", ct);
+                await SendAsync(ws, $@"{{""action"":""subscribe"",""params"":""AM.{_opt.Symbols}""}}", ct);
+
+                _logger.LogInformation("Connected & subscribed to Polygon: AM.{Symbols}", _opt.Symbols);
 
                 var buffer = new byte[64 * 1024];
 
-                while (ws.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
+                while (ws.State == WebSocketState.Open && !ct.IsCancellationRequested)
                 {
-                    using var ms = new MemoryStream();
-                    WebSocketReceiveResult result;
-                    do
-                    {
-                        result = await ws.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
-                        if (result.MessageType == WebSocketMessageType.Close)
-                        {
-                            _logger.LogWarning("Polygon socket closed: {Status} {Desc}",
-                                result.CloseStatus, result.CloseStatusDescription);
-                            break;
-                        }
+                    var json = await ReceiveFullMessageAsync(ws, buffer, ct);
+                    if (json == null) break;
 
-                        ms.Write(buffer, 0, result.Count);
-                    } while (!result.EndOfMessage);
-
-                    if (ms.Length == 0)
-                        continue;
-
-                    var json = Encoding.UTF8.GetString(ms.ToArray());
-
-                    await foreach (var bar in ParseBarsAsync(json, cancellationToken))
-                        yield return bar;   // ✅ now allowed (no catch/finally in scope)
-                }
-
-                // optional delay before reconnect (if server closed)
-                if (!cancellationToken.IsCancellationRequested)
-                {
-                    _logger.LogInformation("Polygon connection ended, reconnecting in 5 seconds…");
-                    await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
-                }
+                    await foreach (var candle in ParseCandlesAsync(json, ct))
+                        yield return candle;
+                }                
             }
         }
 
@@ -91,81 +74,95 @@ namespace MarketInsight.Application.Services
             await ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct).ConfigureAwait(false);
         }
 
-        private async IAsyncEnumerable<MarketBar> ParseBarsAsync(string json, [EnumeratorCancellation] CancellationToken ct)
+        private static async Task<string?> ReceiveFullMessageAsync(ClientWebSocket ws, byte[] buffer, CancellationToken ct)
         {
-            // Parse outside of try/catch – JsonDocument.Parse throws immediately if invalid
-            JsonDocument doc;
-            try
+            using var ms = new MemoryStream();
+            while (true)
             {
-                doc = JsonDocument.Parse(json);
+                var result = await ws.ReceiveAsync(buffer, ct).ConfigureAwait(false);
+                if (result.MessageType == WebSocketMessageType.Close) return null;
+                ms.Write(buffer, 0, result.Count);
+                if (result.EndOfMessage) break;
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to parse Polygon JSON batch – skipping entire message");
-                yield break;
-            }
+            return Encoding.UTF8.GetString(ms.ToArray());
+        }
 
-            // From here on, doc is valid → safe to enumerate
+        private async IAsyncEnumerable<EquityCandle> ParseCandlesAsync(
+            string json,
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            
+            if (string.IsNullOrWhiteSpace(json))
+                yield break;
+
+            using var doc = JsonDocument.Parse(json);
+
             if (doc.RootElement.ValueKind != JsonValueKind.Array)
-            {
-                doc.Dispose();
                 yield break;
-            }
 
-            var stockIdCache = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            // Per-message cache (symbols in one batch are usually repeated)
+            var batchCache = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var el in doc.RootElement.EnumerateArray())
             {
                 ct.ThrowIfCancellationRequested();
 
-                if (!el.TryGetProperty("ev", out var evProp) || evProp.GetString() != "AM")
+                if (!el.TryGetProperty("ev", out var ev) || ev.GetString() != "AM")
                     continue;
 
-                var sym = el.GetProperty("sym").GetString() ?? string.Empty;
+                var sym = el.GetProperty("sym").GetString()!;
                 if (string.IsNullOrEmpty(sym))
                     continue;
 
-                // Resolve StockId – cached per batch
-                if (!stockIdCache.TryGetValue(sym, out var stockId))
+                // Resolve EquityId — first batch cache, then lifetime cache, then registry
+                if (!batchCache.TryGetValue(sym, out var equityId))
                 {
-                    stockId = await ResolveStockIdAsync(sym, ct);
-                    stockIdCache[sym] = stockId;
+                    equityId = _symbolToIdCache.GetOrAdd(sym, _ =>
+                    {
+                        var equity = _equityRegistry.GetOrCreateEquityAsync(sym, ct).GetAwaiter().GetResult();
+                        return equity.EquityId;
+                    });
+
+                    batchCache[sym] = equityId;
                 }
 
-                var o = el.GetProperty("o").GetDecimal();
-                var h = el.GetProperty("h").GetDecimal();
-                var l = el.GetProperty("l").GetDecimal();
-                var c = el.GetProperty("c").GetDecimal();
-                var v = el.GetProperty("v").GetInt64();
-                var vw = el.TryGetProperty("vw", out var vwProp) ? vwProp.GetDecimal() : 0m;
-                var e = el.GetProperty("e").GetInt64();
-                var tsUtc = DateTimeOffset.FromUnixTimeMilliseconds(e).UtcDateTime;
+                // Safe extraction of all fields
+                decimal open = GetDecimal(el, "o");
+                decimal high = GetDecimal(el, "h");
+                decimal low = GetDecimal(el, "l");
+                decimal close = GetDecimal(el, "c");
+                long volume = GetInt64(el, "v");
+                decimal? vwap = TryGetDecimal(el, "a");   // session VWAP
+                long? ats = TryGetInt64(el, "z");     // average trade size
 
-                yield return new MarketBar(
-                    stockId,
-                    1,          // 1-minute
-                    tsUtc,
-                    o, h, l, c,
-                    v,
-                    vw,
-                    null        // TradeCount not available
+                var tsUtc = DateTimeOffset.FromUnixTimeMilliseconds(GetInt64(el, "e")).UtcDateTime;
+
+                yield return new EquityCandle(
+                    EquityId: equityId,
+                    TimeframeId: 1,
+                    TsUtc: tsUtc,
+                    Open: open,
+                    High: high,
+                    Low: low,
+                    Close: close,
+                    Volume: volume,
+                    Vwap: vwap,
+                    Ats: ats
                 );
             }
-
-            doc.Dispose();
         }
 
-        private async Task<int> ResolveStockIdAsync(string symbol, CancellationToken ct)
-        {
-            if (_symbolToIdCache.TryGetValue(symbol, out var id))
-                return id;
+        private static decimal GetDecimal(JsonElement el, string prop) =>
+            el.TryGetProperty(prop, out var p) && p.ValueKind == JsonValueKind.Number ? p.GetDecimal() : 0m;
 
-            var meta = await _stockRegistry.GetTickerMetaAsync(symbol, ct)
-                       ?? await _stockRegistry.CreateTickerMetaIfMissingAsync(symbol, ct);
-            _symbolToIdCache[symbol] = meta.StockId;
-            _logger.LogInformation("Resolved/created StockId {Id} for {Symbol}", meta.StockId, symbol);
-            return meta.StockId;
-        }
+        private static decimal? TryGetDecimal(JsonElement el, string prop) =>
+            el.TryGetProperty(prop, out var p) && p.ValueKind == JsonValueKind.Number ? p.GetDecimal() : null;
+
+        private static long GetInt64(JsonElement el, string prop) =>
+            el.TryGetProperty(prop, out var p) && p.ValueKind == JsonValueKind.Number ? p.GetInt64() : 0L;
+
+        private static long? TryGetInt64(JsonElement el, string prop) =>
+            el.TryGetProperty(prop, out var p) && p.ValueKind == JsonValueKind.Number ? p.GetInt64() : null;
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

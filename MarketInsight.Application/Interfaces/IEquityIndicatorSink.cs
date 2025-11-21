@@ -1,17 +1,18 @@
+using MarketInsight.Application.Engine;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace MarketInsight.Application.Engine
+namespace MarketInsight.Application.Interfaces
 {
     /// <summary>
     /// Abstraction for persisting computed indicator values.
     /// Implemented in Infrastructure (e.g., SQL writer).
     /// </summary>
-    public interface IIndicatorSink
+    public interface IEquityIndicatorSink
     {
         Task UpsertAsync(
-            IReadOnlyCollection<IndicatorValue> batch,
+            IReadOnlyCollection<EquityIndicator> batch,
             CancellationToken cancellationToken = default);
     }
 }
