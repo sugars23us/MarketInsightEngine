@@ -14,6 +14,7 @@ namespace MarketInsight.Application.Engine
         private readonly IEquityCandleSink _candleSink;
         private readonly IEquityCandleSource _candleSource;
         private readonly IEquityRegistry _equityRegistry;
+        private readonly CachedRepository<int, Equity> _entityCache = new();
 
         public IngestionWorker(
             ILogger<IngestionWorker> logger,
@@ -35,9 +36,6 @@ namespace MarketInsight.Application.Engine
         {
             _logger.LogInformation("IngestionWorker started.");
 
-            // Cache equity metadata by EquityId (avoid DB hit per candle)
-            var equityCache = new Dictionary<int, Equity?>();
-
             try
             {
                 await foreach (var candle in _candleSource.ReadAllAsync(stoppingToken).ConfigureAwait(false))
@@ -46,12 +44,7 @@ namespace MarketInsight.Application.Engine
                     await _candleSink.UpsertAsync(new[] { candle }, stoppingToken).ConfigureAwait(false);
 
                     // 2. Get equity metadata (float, ADV, etc.)
-                    if (!equityCache.TryGetValue(candle.EquityId, out var equity))
-                    {
-                        equity = await _equityRegistry.GetEquityAsync(candle.EquityId, stoppingToken)
-                                                      .ConfigureAwait(false);
-                        equityCache[candle.EquityId] = equity;
-                    }
+                    var equity = await _entityCache.GetOrLoadAsync(candle.EquityId, _equityRegistry.GetEquityAsync, stoppingToken);
 
                     // 3. Run indicators
                     var indicators = _engine.ProcessCandle(candle, equity);
