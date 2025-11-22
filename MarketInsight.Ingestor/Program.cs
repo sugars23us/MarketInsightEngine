@@ -5,6 +5,7 @@ using MarketInsight.Application.Services;
 using MarketInsight.Infrastructure.Logging;
 using MarketInsight.Infrastructure.Persistence;
 using MarketInsight.Infrastructure.Streaming;
+using MarketInsight.Shared.DTOs;
 using MarketInsight.Shared.Options;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -49,6 +50,10 @@ internal class Program
         // 7. Engine + Worker
         services.AddSingleton<IndicatorEngine>();
         services.AddHostedService<IngestionWorker>();
+
+        // 8. CachedRepository
+        services.AddSingleton<CachedRepository<int, Equity>>();
+        services.AddSingleton<CachedRepository<string, Equity>>();
     });
 
         var host = hostBuilder.Build();

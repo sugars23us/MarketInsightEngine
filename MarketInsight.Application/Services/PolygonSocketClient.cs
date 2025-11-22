@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using MarketInsight.Application.Engine;
 using MarketInsight.Application.Interfaces;
+using MarketInsight.Shared.DTOs;
 using MarketInsight.Shared.Options;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -24,19 +25,18 @@ namespace MarketInsight.Infrastructure.Streaming
     {
         private readonly PolygonOptions _opt;
         private readonly IEquityRegistry _equityRegistry;
+        private readonly CachedRepository<string, Equity> _tickerCache;
         private readonly ILogger<PolygonSocketClient> _logger;
-
-        // Lifetime cache: symbol → EquityId (persists across reconnects)
-        private readonly ConcurrentDictionary<string, int> _symbolToIdCache
-            = new(StringComparer.OrdinalIgnoreCase);
 
         public PolygonSocketClient(
             IOptions<PolygonOptions> options,
             IEquityRegistry equityRegistry,
+            CachedRepository<string, Equity> tickerCache,
             ILogger<PolygonSocketClient> logger)
         {
             _opt = options.Value;
             _equityRegistry = equityRegistry;
+            _tickerCache = tickerCache;
             _logger = logger;
         }
 
@@ -91,7 +91,6 @@ namespace MarketInsight.Infrastructure.Streaming
             string json,
             [EnumeratorCancellation] CancellationToken ct)
         {
-            
             if (string.IsNullOrWhiteSpace(json))
                 yield break;
 
@@ -99,9 +98,6 @@ namespace MarketInsight.Infrastructure.Streaming
 
             if (doc.RootElement.ValueKind != JsonValueKind.Array)
                 yield break;
-
-            // Per-message cache (symbols in one batch are usually repeated)
-            var batchCache = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var el in doc.RootElement.EnumerateArray())
             {
@@ -114,17 +110,8 @@ namespace MarketInsight.Infrastructure.Streaming
                 if (string.IsNullOrEmpty(sym))
                     continue;
 
-                // Resolve EquityId — first batch cache, then lifetime cache, then registry
-                if (!batchCache.TryGetValue(sym, out var equityId))
-                {
-                    equityId = _symbolToIdCache.GetOrAdd(sym, _ =>
-                    {
-                        var equity = _equityRegistry.GetOrCreateEquityAsync(sym, ct).GetAwaiter().GetResult();
-                        return equity.EquityId;
-                    });
-
-                    batchCache[sym] = equityId;
-                }
+                var equity = await _tickerCache.GetOrLoadAsync(sym, _equityRegistry.GetOrCreateEquityAsync, ct);
+                var equityId = equity.EquityId;
 
                 // Safe extraction of all fields
                 decimal open = GetDecimal(el, "o");
